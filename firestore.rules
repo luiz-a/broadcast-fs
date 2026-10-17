@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isOwner() { return signedIn() && resource.data.ownerId == request.auth.uid; }
+    function willOwn() { return signedIn() && request.resource.data.ownerId == request.auth.uid; }
+    function sameConnection() {
+      return request.resource.data.connectionId == resource.data.connectionId;
+    }
+    function ownsConnection(connId) {
+      return get(/databases/$(database)/documents/connections/$(connId)).data.ownerId == request.auth.uid;
+    }
+    function validName(v) { return v is string && v.size() > 0 && v.size() <= 100; }
+    function validContact() {
+      return validName(request.resource.data.name)
+        && request.resource.data.phone is string
+        && request.resource.data.phone.size() > 0;
+    }
+    function validMessage() {
+      let d = request.resource.data;
+      return d.text is string && d.text.size() > 0 && d.text.size() <= 1000
+        && d.contactIds is list && d.contactIds.size() > 0
+        && d.status in ['scheduled', 'sent'];
+    }
+
+    match /connections/{id} {
+      allow read, delete: if isOwner();
+      allow create: if willOwn() && validName(request.resource.data.name);
+      allow update: if isOwner() && willOwn() && validName(request.resource.data.name);
+    }
+
+    match /contacts/{id} {
+      allow read, delete: if isOwner();
+      allow create: if willOwn() && ownsConnection(request.resource.data.connectionId) && validContact();
+      allow update: if isOwner() && willOwn() && sameConnection() && validContact();
+    }
+
+    match /messages/{id} {
+      allow read, delete: if isOwner();
+      allow create: if willOwn() && ownsConnection(request.resource.data.connectionId) && validMessage();
+      allow update: if isOwner() && willOwn() && sameConnection() && validMessage();
+    }
+  }
+}
